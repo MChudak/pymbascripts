@@ -1,5 +1,1 @@
-- Use argparse.
 - Add a simple previewer with PyQt5.
-- Add a (bash?) wrapper for a series of series of shots. (60 every 1 s, then 120 every 10 s, then 300 every 120 s).
-- Consider adding exponential photo spacing -- but this would make most sense if the minimal period (~0.1 s) was used at the moment dewetting started, which would need to be chosen manually (with the previewer?).
-- Use actual timestamps.
