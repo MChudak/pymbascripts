@@ -66,14 +66,13 @@ with pymba.Vimba() as vimba:
     CAMERA0.openCamera()
     CAMERA0.AcquisitionMode = 'SingleFrame'
 
-    UTCNOW = dt.datetime.utcnow()
     if ARGS.exptmax is None:
         TIMEDELTA = dt.timedelta(seconds=DELTASEC)
-        ACQUISITIONTIMES = [UTCNOW+j*TIMEDELTA for j in range(NFRAMES)]
+        ACQUISITIONTIMES = [dt.datetime.utcnow()+j*TIMEDELTA for j in range(NFRAMES)]
     else:
         BASE = 2 # semi-arbitrary, influences the algorithm's effective range
         TAUMAX = ARGS.exptmax[0] / DELTASEC
-        FUNC = lambda x: BASE**(x*NFRAMES) - 1 - TAUMAX*(BASE**x - 1)
+        FUNC = lambda x: BASE**(x*(NFRAMES-1)) - 1 - TAUMAX*(BASE**x - 1)
 
         XX = np.logspace(-8, 2, 100)
         I0 = None
@@ -88,8 +87,9 @@ with pymba.Vimba() as vimba:
         A, B = XX[I0], XX[I0+1]
 
         TAU = BASE**optimize.brentq(FUNC, A, B)
-        TIMEDELTALIST = [dt.timedelta(seconds=DELTASEC*TAU**i) for i in range(NFRAMES)]
-        ACQUISITIONTIMES = UTCNOW + np.cumsum(TIMEDELTALIST)
+        TIMEDELTALIST = [dt.timedelta(seconds=0)] \
+                + [dt.timedelta(seconds=DELTASEC*TAU**i) for i in range(NFRAMES-1)]
+        ACQUISITIONTIMES = dt.datetime.utcnow() + np.cumsum(TIMEDELTALIST)
 
     for i, t in enumerate(ACQUISITIONTIMES):
         frame0 = CAMERA0.getFrame()
