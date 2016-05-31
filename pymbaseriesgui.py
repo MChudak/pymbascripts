@@ -45,7 +45,6 @@ PARSER.add_argument('--nohc', '-c', action='store_true', help='don\'t generate h
 PARSER.add_argument('--onlyhc', '-l', action='store_true', help='generate only hi-contrast images')
 ARGS = PARSER.parse_args()
 
-CAMERA0 = None
 NFRAMES = ARGS.nframes[0]
 DELTASEC = ARGS.dt[0]
 if ARGS.exptmax is not None:
@@ -81,80 +80,97 @@ def spinboxchanged(_=None):
     global NFRAMES, DELTASEC, EXPTMAX
     NFRAMES = UI.spinBoxNFrames.value()
     DELTASEC = UI.doubleSpinBoxDT0.value()
+    tmax = None
     if UI.checkBoxExpT.checkState():
         EXPTMAX = UI.doubleSpinBoxTMax.value()
+        tmax = EXPTMAX
     else:
         EXPTMAX = None
-        UI.doubleSpinBoxTMax.setValue(NFRAMES*DELTASEC)
+        tmax = NFRAMES*DELTASEC
+        UI.doubleSpinBoxTMax.setValue(tmax)
     UI.labelExpTH.setText('That\'s {:.0f}h {:02.0f}m {:02.0f}s.'.format(
-        EXPTMAX//3600, EXPTMAX%3600//60, EXPTMAX%60))
+        tmax//3600, tmax%3600//60, tmax%60))
 
-def saveimage(data, path):
+def saveimage(data, folder, fname):
     """ Save image to path """
-    if not os.path.exists(path):
-        os.makedirs(path)
-    misc.imsave(path, data)
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+    misc.imsave(folder + "/" + fname, data)
 
-def saveimages(imgdata, opath=None, hcpath=None):
+def saveimages(imgdata, fname, ofolder=None, hcfolder=None):
     """ Save a raw and an enchanted image, to be called in a separate thread """
-    if opath is not None:
-        saveimage(imgdata, opath)
-    if hcpath is not None:
+    if ofolder is not None:
+        saveimage(imgdata, ofolder, fname)
+    if hcfolder is not None:
         mindata, maxdata = imgdata.min(), imgdata.max()
-        saveimage((imgdata-mindata)/(maxdata-mindata), hcpath)
-    print('{}: saved shot(s) ({} threads)'.format(dt.datetime.utcnow(), \
+        saveimage((imgdata-mindata)/(maxdata-mindata), hcfolder, fname)
+    UI.statusBar.showMessage('{}: saved shot(s) ({} threads)'.format(dt.datetime.utcnow(), \
             threading.active_count()))
+
+def acquirephotoinbackground(_=None):
+    threading.Thread(target=acquirephoto).start()
 
 def acquirephoto(_=None):
     """ Save a series of photographs. """
-    global IMAGEBYTES, CAMERA0
+    global IMAGEBYTES
+    UI.pushButtonShoot.setDisabled(True)
+    UI.statusBar.showMessage("Running...")
+    UI.pushButtonShoot.update()
+    UI.statusBar.update()
     with pymba.Vimba() as vimba:
-        if CAMERA0 is None:
-            system = vimba.getSystem()
+        system = vimba.getSystem()
+        if system.GeVTLIsPresent:
+            system.runFeatureCommand("GeVDiscoveryAllOnce")
+        cameraids = vimba.getCameraIds()
+        if len(cameraids) == 0:
+            return
+        camera0 = vimba.getCamera(cameraids[0])
+        camera0.openCamera()
+        camera0.AcquisitionMode = 'SingleFrame'
 
-            if system.GeVTLIsPresent:
-                system.runFeatureCommand("GeVDiscoveryAllOnce")
-                time.sleep(0.2)
-            cameraids = vimba.getCameraIds()
-            assert len(cameraids) > 0, "No cameras found!"
-            CAMERA0 = vimba.getCamera(cameraids[0])
-        CAMERA0.openCamera()
-        CAMERA0.AcquisitionMode = 'SingleFrame'
-
-        frame0 = CAMERA0.getFrame()
+        frame0 = camera0.getFrame()
         frame0.announceFrame()
-        CAMERA0.startCapture()
+        camera0.startCapture()
         frame0.queueFrameCapture()
-        CAMERA0.runFeatureCommand('AcquisitionStart')
-        CAMERA0.runFeatureCommand('AcquisitionStop')
+        camera0.runFeatureCommand('AcquisitionStart')
+        camera0.runFeatureCommand('AcquisitionStop')
         frame0.waitFrameCapture()
 
         IMAGEBYTES = np.ndarray(buffer=frame0.getBufferByteData(), \
                              dtype=np.uint8, \
                              shape=(frame0.height, frame0.width))
-        drawimage(imbytes=IMAGEBYTES)
-        UI.label.update()
+        drawimage()
 
-        CAMERA0.endCapture()
-        CAMERA0.revokeAllFrames()
-        CAMERA0.closeCamera()
+        camera0.endCapture()
+        camera0.revokeAllFrames()
+        camera0.closeCamera()
+    UI.pushButtonShoot.setEnabled(True)
+    UI.statusBar.showMessage("Idle.")
+    UI.pushButtonShoot.update()
+    UI.statusBar.update()
+
+def saveimageseriesinbackground(_=None):
+    threading.Thread(target=saveimageseries).start()
 
 def saveimageseries(_=None):
     """ Save a series of photographs. """
-    global IMAGEBYTES, CAMERA0
+    global IMAGEBYTES, EXPTMAX, DELTASEC
+    UI.pushButtonStart.setDisabled(True)
+    UI.statusBar.showMessage("Running...")
+    UI.pushButtonStart.update()
+    UI.statusBar.update()
     with pymba.Vimba() as vimba:
-        if CAMERA0 is None:
-            system = vimba.getSystem()
-            if system.GeVTLIsPresent:
-                system.runFeatureCommand("GeVDiscoveryAllOnce")
-                time.sleep(0.2)
-            cameraids = vimba.getCameraIds()
-            assert len(cameraids) > 0, "No cameras found!"
-            CAMERA0 = vimba.getCamera(cameraids[0])
-        CAMERA0.openCamera()
-        CAMERA0.AcquisitionMode = 'SingleFrame'
+        system = vimba.getSystem()
+        if system.GeVTLIsPresent:
+            system.runFeatureCommand("GeVDiscoveryAllOnce")
+            time.sleep(0.2)
+        cameraids = vimba.getCameraIds()
+        assert len(cameraids) > 0, "No cameras found!"
+        camera0 = vimba.getCamera(cameraids[0])
+        camera0.openCamera()
+        camera0.AcquisitionMode = 'SingleFrame'
 
-        if EXPTMAX is False:
+        if EXPTMAX is None:
             timedelta = dt.timedelta(seconds=DELTASEC)
             acquisitiontimes = [dt.datetime.utcnow()+j*timedelta for j in range(NFRAMES)]
         else:
@@ -162,7 +178,7 @@ def saveimageseries(_=None):
             taumax = EXPTMAX / DELTASEC
             func = lambda x: base**(x*(NFRAMES-1)) - 1 - taumax*(base**x - 1)
 
-            testx = np.logspace(-8, 2, 100)
+            testx = np.logspace(-8, 2, 1000)
             testi = None
             with warnings.catch_warnings():
                 # Overflow is expected here
@@ -172,9 +188,9 @@ def saveimageseries(_=None):
                     if product < 0:
                         testi = i
                         break
-            taumin, taumax = testx[testi], testx[testi+1]
+            taux0, taux1 = testx[testi], testx[testi+1]
 
-            tau = base**optimize.brentq(func, taumin, taumax)
+            tau = base**optimize.brentq(func, taux0, taux1)
             timedeltalist = [dt.timedelta(seconds=0)] \
                     + [dt.timedelta(seconds=DELTASEC*tau**i) for i in range(NFRAMES-1)]
             acquisitiontimes = dt.datetime.utcnow() + np.cumsum(timedeltalist)
@@ -188,33 +204,36 @@ def saveimageseries(_=None):
             hicontrastfolder = None
 
         for i in range(len(acquisitiontimes)):
-            frame0 = CAMERA0.getFrame()
+            frame0 = camera0.getFrame()
             frame0.announceFrame()
 
-            CAMERA0.startCapture()
+            camera0.startCapture()
             frame0.queueFrameCapture()
-            CAMERA0.runFeatureCommand('AcquisitionStart')
-            CAMERA0.runFeatureCommand('AcquisitionStop')
+            camera0.runFeatureCommand('AcquisitionStart')
+            camera0.runFeatureCommand('AcquisitionStop')
             frame0.waitFrameCapture()
             timestamp = dt.datetime.utcnow()
 
             IMAGEBYTES = np.ndarray(buffer=frame0.getBufferByteData(), \
                                  dtype=np.uint8, \
                                  shape=(frame0.height, frame0.width))
-            drawimage()
-            UI.label.update()
+            threading.Thread(target=drawimage).start()
 
             filename = '{}.{}'.format(timestamp, imageformat)
             threading.Thread(target=saveimages, args=[np.array(IMAGEBYTES), \
-                       outputfolder, hicontrastfolder, filename]).start()
+                       filename, outputfolder, hicontrastfolder]).start()
 
             if i+1 < NFRAMES:
                 naptime = (acquisitiontimes[i+1] - dt.datetime.utcnow()).total_seconds()
                 if naptime > 0:
                     time.sleep(naptime)
 
-            CAMERA0.endCapture()
-            CAMERA0.revokeAllFrames()
+            camera0.endCapture()
+            camera0.revokeAllFrames()
+    UI.pushButtonStart.setEnabled(True)
+    UI.statusBar.showMessage("Idle.")
+    UI.pushButtonStart.update()
+    UI.statusBar.update()
 
 APP = QApplication(sys.argv)
 WINDOW = QMainWindow()
@@ -226,9 +245,11 @@ UI.checkBoxExpT.stateChanged.connect(spinboxchanged)
 UI.checkBoxHCView.stateChanged.connect(drawimage)
 UI.doubleSpinBoxDT0.valueChanged.connect(spinboxchanged)
 UI.doubleSpinBoxTMax.valueChanged.connect(spinboxchanged)
+#UI.pushButtonStart.clicked.connect(saveimageseriesinbackground)
 UI.pushButtonStart.clicked.connect(saveimageseries)
 UI.spinBoxNFrames.valueChanged.connect(spinboxchanged)
 UI.toolButtonChooseFolder.clicked.connect(outputdialog)
+UI.pushButtonShoot.clicked.connect(acquirephotoinbackground)
 
 if NFRAMES is not None:
     UI.spinBoxNFrames.setValue(NFRAMES)
@@ -245,6 +266,8 @@ XX = np.arange(0, 300)
 YY = np.arange(0, 200)
 IMAGEDATA = np.array([[np.cos(x/25) + np.cos(y/25) for x in XX] for y in YY])
 IMAGEBYTES = (100 + 32*(0.5+IMAGEDATA/4)).astype(np.uint8)
+
+UI.statusBar.showMessage("Idle.")
 
 WINDOW.show()
 sys.exit(APP.exec_())

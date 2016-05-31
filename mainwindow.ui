@@ -11,7 +11,7 @@
    </rect>
   </property>
   <property name="windowTitle">
-   <string>MainWindow</string>
+   <string>PymbaSeries</string>
   </property>
   <widget class="QWidget" name="centralWidget">
    <layout class="QHBoxLayout" name="horizontalLayout_2" stretch="0,1">
@@ -80,10 +80,10 @@
           <number>20000</number>
          </property>
          <property name="singleStep">
-          <number>100</number>
+          <number>5</number>
          </property>
          <property name="value">
-          <number>30</number>
+          <number>5</number>
          </property>
         </widget>
        </item>
@@ -248,6 +248,13 @@
         </spacer>
        </item>
        <item>
+        <widget class="QPushButton" name="pushButtonShoot">
+         <property name="text">
+          <string>One Shot</string>
+         </property>
+        </widget>
+       </item>
+       <item>
         <widget class="QPushButton" name="pushButtonStart">
          <property name="text">
           <string>Start</string>
@@ -326,6 +333,7 @@
    </widget>
    <addaction name="menuMenu"/>
   </widget>
+  <widget class="QStatusBar" name="statusBar"/>
   <action name="actionQuit">
    <property name="text">
     <string>&amp;Quit</string>
