@@ -45,6 +45,7 @@ PARSER.add_argument('--nohc', '-c', action='store_true', help='don\'t generate h
 PARSER.add_argument('--onlyhc', '-l', action='store_true', help='generate only hi-contrast images')
 ARGS = PARSER.parse_args()
 
+CAMERA0 = None
 NFRAMES = ARGS.nframes[0]
 DELTASEC = ARGS.dt[0]
 if ARGS.exptmax is not None:
@@ -54,34 +55,37 @@ else:
 OUTPUTFOLDER = ARGS.output[0]
 HICONTRASTFOLDER = OUTPUTFOLDER + "/hicontrast"
 
-def drawimage(_=None):
+def drawimage(_=None, imbytes=None):
     """ A slot called when the label is resized. """
-    if UI.checkBoxHCView.checkState():
-        imgfloat = IMAGEBYTES.astype(np.double)
-        immax = imgfloat.max()
-        immin = imgfloat.min()
-        imbytes = (255*(imgfloat-immin)/(immax-immin)).astype(np.uint8)
-    else:
-        imbytes = IMAGEBYTES
+    if imbytes is None:
+        if UI.checkBoxHCView.checkState():
+            imgfloat = IMAGEBYTES.astype(np.double)
+            immax = imgfloat.max()
+            immin = imgfloat.min()
+            imbytes = (255*(imgfloat-immin)/(immax-immin)).astype(np.uint8)
+        else:
+            imbytes = IMAGEBYTES
     image = QImage(imbytes.flatten(), imbytes.shape[1], imbytes.shape[0],
                    QImage.Format_Grayscale8)
     UI.label.setPixmap(QPixmap.fromImage(image.scaled(UI.label.size(), Qt.KeepAspectRatio)))
 
 def outputdialog(_=None):
     """ Show a file dialog to choose the output folder. """
+    global OUTPUTFOLDER, HICONTRASTFOLDER
     OUTPUTFOLDER = QFileDialog.getExistingDirectory()
     HICONTRASTFOLDER = OUTPUTFOLDER + "/hicontrast"
     UI.lineEditOutput.setText(OUTPUTFOLDER)
 
 def spinboxchanged(_=None):
     """ If not using exp. delays update the total time spinbox. """
+    global NFRAMES, DELTASEC, EXPTMAX
     NFRAMES = UI.spinBoxNFrames.value()
     DELTASEC = UI.doubleSpinBoxDT0.value()
     if UI.checkBoxExpT.checkState():
         EXPTMAX = UI.doubleSpinBoxTMax.value()
     else:
-        EXPTMAX = NFRAMES*DELTASEC
-        UI.doubleSpinBoxTMax.setValue(EXPTMAX)
+        EXPTMAX = None
+        UI.doubleSpinBoxTMax.setValue(NFRAMES*DELTASEC)
     UI.labelExpTH.setText('That\'s {:.0f}h {:02.0f}m {:02.0f}s.'.format(
         EXPTMAX//3600, EXPTMAX%3600//60, EXPTMAX%60))
 
@@ -101,26 +105,61 @@ def saveimages(imgdata, opath=None, hcpath=None):
     print('{}: saved shot(s) ({} threads)'.format(dt.datetime.utcnow(), \
             threading.active_count()))
 
+def acquirephoto(_=None):
+    """ Save a series of photographs. """
+    global IMAGEBYTES, CAMERA0
+    with pymba.Vimba() as vimba:
+        if CAMERA0 is None:
+            system = vimba.getSystem()
+
+            if system.GeVTLIsPresent:
+                system.runFeatureCommand("GeVDiscoveryAllOnce")
+                time.sleep(0.2)
+            cameraids = vimba.getCameraIds()
+            assert len(cameraids) > 0, "No cameras found!"
+            CAMERA0 = vimba.getCamera(cameraids[0])
+        CAMERA0.openCamera()
+        CAMERA0.AcquisitionMode = 'SingleFrame'
+
+        frame0 = CAMERA0.getFrame()
+        frame0.announceFrame()
+        CAMERA0.startCapture()
+        frame0.queueFrameCapture()
+        CAMERA0.runFeatureCommand('AcquisitionStart')
+        CAMERA0.runFeatureCommand('AcquisitionStop')
+        frame0.waitFrameCapture()
+
+        IMAGEBYTES = np.ndarray(buffer=frame0.getBufferByteData(), \
+                             dtype=np.uint8, \
+                             shape=(frame0.height, frame0.width))
+        drawimage(imbytes=IMAGEBYTES)
+        UI.label.update()
+
+        CAMERA0.endCapture()
+        CAMERA0.revokeAllFrames()
+        CAMERA0.closeCamera()
+
 def saveimageseries(_=None):
     """ Save a series of photographs. """
+    global IMAGEBYTES, CAMERA0
     with pymba.Vimba() as vimba:
-        system = vimba.getSystem()
+        if CAMERA0 is None:
+            system = vimba.getSystem()
+            if system.GeVTLIsPresent:
+                system.runFeatureCommand("GeVDiscoveryAllOnce")
+                time.sleep(0.2)
+            cameraids = vimba.getCameraIds()
+            assert len(cameraids) > 0, "No cameras found!"
+            CAMERA0 = vimba.getCamera(cameraids[0])
+        CAMERA0.openCamera()
+        CAMERA0.AcquisitionMode = 'SingleFrame'
 
-        if system.GeVTLIsPresent:
-            system.runFeatureCommand("GeVDiscoveryAllOnce")
-            time.sleep(0.2)
-        cameraids = vimba.getCameraIds()
-        assert len(cameraids) > 0, "No cameras found!"
-        camera0 = vimba.getCamera(cameraids[0])
-        camera0.openCamera()
-        camera0.AcquisitionMode = 'SingleFrame'
-
-        if ARGS.exptmax is None:
+        if EXPTMAX is False:
             timedelta = dt.timedelta(seconds=DELTASEC)
             acquisitiontimes = [dt.datetime.utcnow()+j*timedelta for j in range(NFRAMES)]
         else:
             base = 2 # semi-arbitrary, influences the algorithm's effective range
-            taumax = ARGS.exptmax[0] / DELTASEC
+            taumax = EXPTMAX / DELTASEC
             func = lambda x: base**(x*(NFRAMES-1)) - 1 - taumax*(base**x - 1)
 
             testx = np.logspace(-8, 2, 100)
@@ -140,14 +179,22 @@ def saveimageseries(_=None):
                     + [dt.timedelta(seconds=DELTASEC*tau**i) for i in range(NFRAMES-1)]
             acquisitiontimes = dt.datetime.utcnow() + np.cumsum(timedeltalist)
 
+        imageformat = UI.comboBoxFormat.currentText()
+        outputfolder = UI.lineEditOutput.text()
+        hicontrastfolder = outputfolder + "/hicontrast"
+        if not UI.checkBoxUnaltered.checkState():
+            outputfolder = None
+        if not UI.checkBoxHCOut.checkState():
+            hicontrastfolder = None
+
         for i in range(len(acquisitiontimes)):
-            frame0 = camera0.getFrame()
+            frame0 = CAMERA0.getFrame()
             frame0.announceFrame()
 
-            camera0.startCapture()
+            CAMERA0.startCapture()
             frame0.queueFrameCapture()
-            camera0.runFeatureCommand('AcquisitionStart')
-            camera0.runFeatureCommand('AcquisitionStop')
+            CAMERA0.runFeatureCommand('AcquisitionStart')
+            CAMERA0.runFeatureCommand('AcquisitionStop')
             frame0.waitFrameCapture()
             timestamp = dt.datetime.utcnow()
 
@@ -155,23 +202,19 @@ def saveimageseries(_=None):
                                  dtype=np.uint8, \
                                  shape=(frame0.height, frame0.width))
             drawimage()
+            UI.label.update()
 
-            outputpath, hicontrastpath = None, None
-            imageformat = UI.comboBoxFormat.currentText()
-            if not ARGS.onlyhc:
-                outputpath = '{}/{}.{}'.format(OUTPUTFOLDER, timestamp, imageformat)
-            if not ARGS.nohc:
-                hicontrastpath = '{}/{}.{}'.format(HICONTRASTFOLDER, timestamp, imageformat)
+            filename = '{}.{}'.format(timestamp, imageformat)
             threading.Thread(target=saveimages, args=[np.array(IMAGEBYTES), \
-                       outputpath, hicontrastpath]).start()
+                       outputfolder, hicontrastfolder, filename]).start()
 
             if i+1 < NFRAMES:
                 naptime = (acquisitiontimes[i+1] - dt.datetime.utcnow()).total_seconds()
                 if naptime > 0:
                     time.sleep(naptime)
 
-            camera0.endCapture()
-            camera0.revokeAllFrames()
+            CAMERA0.endCapture()
+            CAMERA0.revokeAllFrames()
 
 APP = QApplication(sys.argv)
 WINDOW = QMainWindow()
@@ -195,6 +238,7 @@ if EXPTMAX is not None:
     UI.doubleSpinBoxTMax.setValue(EXPTMAX)
 
 spinboxchanged()
+acquirephoto()
 
 # some fake 'photo' data to process
 XX = np.arange(0, 300)

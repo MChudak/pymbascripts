@@ -83,7 +83,7 @@
           <number>100</number>
          </property>
          <property name="value">
-          <number>200</number>
+          <number>30</number>
          </property>
         </widget>
        </item>
@@ -106,7 +106,7 @@
           <double>0.100000000000000</double>
          </property>
          <property name="value">
-          <double>1.000000000000000</double>
+          <double>0.500000000000000</double>
          </property>
         </widget>
        </item>
@@ -148,7 +148,7 @@
           <double>60.000000000000000</double>
          </property>
          <property name="value">
-          <double>600.000000000000000</double>
+          <double>10.000000000000000</double>
          </property>
         </widget>
        </item>
@@ -174,7 +174,7 @@
          <item>
           <widget class="QLineEdit" name="lineEditOutput">
            <property name="text">
-            <string>~/OutputFolder/</string>
+            <string>/home/mc/tmp/cameratest/02</string>
            </property>
           </widget>
          </item>
@@ -202,6 +202,9 @@
        </item>
        <item>
         <widget class="QComboBox" name="comboBoxFormat">
+         <property name="currentIndex">
+          <number>1</number>
+         </property>
          <item>
           <property name="text">
            <string>png</string>
@@ -218,9 +221,6 @@
         <widget class="QCheckBox" name="checkBoxUnaltered">
          <property name="text">
           <string>Output Unaltered</string>
-         </property>
-         <property name="checked">
-          <bool>true</bool>
          </property>
         </widget>
        </item>
